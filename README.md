@@ -7,6 +7,46 @@ fills in or submits any reservation form, and does not purchase anything.
 
 Default target date: **Saturday, September 26, 2026**.
 
+## Running it without installing anything (recommended if you're not technical)
+
+This repo includes a GitHub Actions workflow that runs the checker in the
+cloud and gives you a webpage with the results. One-time setup, then you
+just click a button whenever you want a fresh check.
+
+**One-time setup (about 1 minute):**
+
+1. On this repo's GitHub page, click **Settings** (top menu bar).
+2. In the left sidebar, click **Pages**.
+3. Under "Build and deployment" → "Source", choose **GitHub Actions**.
+
+That's it — you won't need to touch settings again.
+
+**Every time you want to check availability:**
+
+1. Click the **Actions** tab (top menu bar).
+2. In the left sidebar, click **Check Oktoberfest tent availability**.
+3. Click the **Run workflow** button (top right of the list), optionally
+   change the date, then click the green **Run workflow** button in the
+   dropdown.
+4. Wait a few minutes (it's visiting 36 websites one by one) — refresh the
+   page and you'll see a run appear with a spinner, then a green checkmark
+   once it's done.
+5. Click into that run, then open the **deploy** step to find the report's
+   web link (also always available at
+   `https://<your-github-username>.github.io/SummarAdventure/`).
+   If you see a red X on "deploy" instead — that only happens if step 3 of
+   the one-time setup above wasn't done yet, or hasn't finished propagating
+   yet (can take a minute the very first time). Either way, you can still
+   get the results: scroll to the bottom of the run page to
+   **Artifacts**, download **availability-report**, and unzip it — inside
+   is `report.html`, open it by double-clicking.
+
+## Running it on your own computer instead
+
+If you'd rather run it locally (more reliable — it looks like an ordinary
+home visitor to the tent sites, whereas GitHub's cloud servers might get
+blocked by some sites' bot protection more easily):
+
 ## Setup
 
 ```bash

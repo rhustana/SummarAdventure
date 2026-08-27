@@ -1,0 +1,69 @@
+name: Check Oktoberfest tent availability
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to check (YYYY-MM-DD)"
+        required: false
+        default: "2026-09-26"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - run: playwright install --with-deps chromium
+
+      - name: Run availability check
+        run: |
+          DATE="${{ github.event.inputs.date }}"
+          DATE="${DATE:-2026-09-26}"
+          python check_availability.py --date "$DATE" --output-dir site --no-open
+
+      - name: Add index.html so the report loads at the site's root URL
+        run: cp site/report.html site/index.html
+
+      # Always available as a downloadable zip from the workflow run page,
+      # even before GitHub Pages is turned on for this repo (see README).
+      - name: Upload report as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: availability-report
+          path: site
+
+      - name: Upload report for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    # This step only succeeds once GitHub Pages is turned on for this repo
+    # (Settings -> Pages -> Build and deployment -> Source: GitHub Actions).
+    # Until then, ignore its red X and use the "availability-report" artifact
+    # from the check job above instead -- see README.
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
