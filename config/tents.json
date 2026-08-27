@@ -1,0 +1,197 @@
+[
+  {
+    "id": "armbrustschuetzenzelt",
+    "name": "Armbrustschützen-Festzelt",
+    "url": "https://www.armbrustschuetzenzelt.de/reservierung/reservierungsanfrage/"
+  },
+  {
+    "id": "augustiner-festhalle",
+    "name": "Augustiner-Festhalle",
+    "url": "https://www.festhalle-augustiner.com/reservierung/"
+  },
+  {
+    "id": "boandlkramerei",
+    "name": "Boandlkramerei",
+    "url": "https://reservierung.boandlkramerei.bayern/"
+  },
+  {
+    "id": "festzelt-tradition",
+    "name": "Festzelt Tradition",
+    "url": "http://www.oktoberfestzelt-tradition.de/festzelt-tradition-reservieren.html"
+  },
+  {
+    "id": "fischer-vroni",
+    "name": "Fischer-Vroni",
+    "url": "https://reservierung.fischer-vroni.de/reservation"
+  },
+  {
+    "id": "hacker-festzelt",
+    "name": "Hacker-Festzelt",
+    "url": "https://hacker-festzelt.de/reservierung/"
+  },
+  {
+    "id": "hofbraeu-festzelt",
+    "name": "Hofbräu-Festzelt",
+    "url": "https://www.hb-festzelt.de/reservierungen.html"
+  },
+  {
+    "id": "kaefer-wiesn-schaenke",
+    "name": "Käfer Wiesn-Schänke",
+    "url": "https://www.feinkost-kaefer.de/wiesn-schaenke"
+  },
+  {
+    "id": "loewenbraeu-festzelt",
+    "name": "Löwenbräu-Festzelt",
+    "url": "https://www.loewenbraeuzelt.de/reservierungen/",
+    "notes": "URL recovered from a malformed markdown link in the original list (display text pointed at the Käfer URL, href pointed here). Please double-check this is the right page."
+  },
+  {
+    "id": "marstall",
+    "name": "Marstall",
+    "url": "https://www.marstall-oktoberfest.de/musik.html",
+    "notes": "Given URL is the 'Musik' page, not an obvious reservation page. May need the correct reservation URL."
+  },
+  {
+    "id": "ochsenbraterei",
+    "name": "Ochsenbraterei",
+    "url": "https://www.ochsenbraterei.de/reservierung/"
+  },
+  {
+    "id": "paulaner-festzelt",
+    "name": "Paulaner-Festzelt",
+    "url": "https://reservierung.paulanerfestzelt.de/"
+  },
+  {
+    "id": "braeurosl",
+    "name": "Bräurosl",
+    "url": "https://www.braeurosl.de/reservieren"
+  },
+  {
+    "id": "schottenhamel",
+    "name": "Schottenhamel-Festhalle",
+    "url": "https://festhalle-schottenhamel.de/de/reservierung/reservierung"
+  },
+  {
+    "id": "schuetzenfestzelt",
+    "name": "Schützenfestzelt",
+    "url": "https://reservierung.schuetzenfestzelt.com/reservation"
+  },
+  {
+    "id": "schuetzenlisl",
+    "name": "Schützenlisl",
+    "url": "https://www.schuetzenlisl.de/reservierung/"
+  },
+  {
+    "id": "floesserstadl",
+    "name": "Flösserstadl",
+    "url": "https://www.floesserstadl.de/reservierung"
+  },
+  {
+    "id": "bodos",
+    "name": "Bodo's",
+    "url": "http://www.bodos.de/reservierungen/"
+  },
+  {
+    "id": "rischarts-cafe",
+    "name": "Rischart's Café (Kaiserschmarrn)",
+    "url": "https://www.rischart.de/oktoberfest/rischart-s-cafe-kaiserschmarrn/"
+  },
+  {
+    "id": "cafe-theres",
+    "name": "Café Theres",
+    "url": "https://cafe-theres.de/reservieren/"
+  },
+  {
+    "id": "wiesnzelt",
+    "name": "Wiesnzelt",
+    "url": "https://wiesnzelt.de/wiesn-resevierung-2023/",
+    "notes": "URL contains '2023' and may be stale; check for a current-year reservation page on this site."
+  },
+  {
+    "id": "fisch-baeda",
+    "name": "Fisch-Bäda",
+    "url": "https://fisch-baeda.de/Seite/Reservierung.html"
+  },
+  {
+    "id": "gloeckle-wirt",
+    "name": "Glöckle Wirt",
+    "url": "https://gloeckle-wirt.de/reservierung.html"
+  },
+  {
+    "id": "ables-goldener-hahn",
+    "name": "Able's Goldener Hahn",
+    "url": "https://www.ables-goldener-hahn.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "haxnbraterei",
+    "name": "Haxnbraterei",
+    "url": "https://haxnbraterei.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "heimer-entenbraterei",
+    "name": "Heimer Entenbraterei",
+    "url": "https://www.heimer-entenbraterei.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "heinz-huehnerbraterei",
+    "name": "Heinz Hühnerbraterei",
+    "url": "https://www.heinz-huehnerbraterei.de/oktoberfest/reservierung/"
+  },
+  {
+    "id": "ammer-wiesn",
+    "name": "Ammer-Wiesn",
+    "url": "https://ammer-wiesn.de/reservierung/"
+  },
+  {
+    "id": "schiebls-cafebetriebe",
+    "name": "Schiebl's Café-Betriebe",
+    "url": "http://www.schiebls-cafebetriebe.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "kalbsbraterei",
+    "name": "Kalbsbraterei",
+    "url": "http://kalbsbraterei.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "muenchner-knoedelei",
+    "name": "Münchner Knoedelei",
+    "url": "https://muenchner-knoedelei.de/#online-reservierung"
+  },
+  {
+    "id": "poschners",
+    "name": "Poschner's",
+    "url": "https://www.poschners.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  },
+  {
+    "id": "vinzenzmurr-metzger-stubn",
+    "name": "Vinzenzmurr Metzger-Stubn",
+    "url": "https://vinzenzmurr.de/metzger-stubn/"
+  },
+  {
+    "id": "wiesn-guglhupf",
+    "name": "Wiesn-Guglhupf",
+    "url": "http://www.wiesn-guglhupf.de/reservierung/"
+  },
+  {
+    "id": "wildstuben",
+    "name": "Wildstuben",
+    "url": "https://wildstuben.de/reservierung/"
+  },
+  {
+    "id": "schichtl",
+    "name": "Schichtl",
+    "url": "https://www.schichtl.de/wirtshaus/#reservierungsanfrage"
+  },
+  {
+    "id": "zur-bratwurst",
+    "name": "Zur Bratwurst",
+    "url": "https://www.zur-bratwurst.de/",
+    "notes": "Given URL is the homepage; no specific reservation path was provided."
+  }
+]
