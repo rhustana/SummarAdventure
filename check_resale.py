@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """CLI: check the Oktoberfest resale site for new table listings on a given
-date, and push an ntfy.sh notification for any listing not seen before.
+date, and notify about any listing not seen before.
+
+Two notification channels (--notify-via):
+  stdout  (default) -- prints one "NOTIFY_JSON: {...}" line per new listing
+                        and does nothing else. Meant to be run by a Claude
+                        Code Remote Routine session, which reads that output
+                        and relays it via the PushNotification tool.
+  ntfy    -- posts directly to an ntfy.sh topic (--topic / $NTFY_TOPIC).
+             What the GitHub Actions workflow used before switching to the
+             Claude-app push flow; kept as a fallback.
 
 Examples:
-    python check_resale.py                          # normal run
+    python check_resale.py                          # normal run (stdout)
     python check_resale.py --headed                 # watch it work
+    python check_resale.py --notify-via ntfy --topic my-topic
     python check_resale.py --dump                    # debug: save every
                                                        # price-bearing block
                                                        # found on the page,
@@ -49,9 +59,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
     p.add_argument(
+        "--notify-via",
+        choices=["stdout", "ntfy"],
+        default="stdout",
+        help="stdout: print NOTIFY_JSON lines for a Claude Routine to relay (default). "
+        "ntfy: post directly to an ntfy.sh topic.",
+    )
+    p.add_argument(
         "--topic",
         default=os.environ.get("NTFY_TOPIC"),
-        help="ntfy.sh topic to notify (default: $NTFY_TOPIC env var)",
+        help="ntfy.sh topic to notify, only used with --notify-via ntfy (default: $NTFY_TOPIC env var)",
     )
     p.add_argument("--card-selector", default=None, help="CSS selector for listing cards, once known (see README)")
     p.add_argument("--timeout", type=int, default=30_000, help="Navigation timeout in ms")
@@ -65,13 +82,31 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def make_notifier(args: argparse.Namespace):
+    """Returns notify(*, title, message, url=None, priority="default", tags=None).
+
+    Raises RuntimeError on failure to send (stdout mode never fails).
+    """
+    if args.notify_via == "ntfy":
+        def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
+            send_ntfy(args.topic, title=title, message=message, url=url, priority=priority, tags=tags)
+        return notifier
+
+    def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
+        print("NOTIFY_JSON: " + json.dumps({"title": title, "message": message, "url": url}, ensure_ascii=False))
+
+    return notifier
+
+
 async def run(args: argparse.Namespace) -> int:
-    if not args.dump and not args.topic:
+    if not args.dump and args.notify_via == "ntfy" and not args.topic:
         print(
             "No ntfy topic set. Pass --topic or set the NTFY_TOPIC environment variable.",
             file=sys.stderr,
         )
         return 1
+
+    notify = make_notifier(args)
 
     screenshot_path = None
     if args.dump:
@@ -119,8 +154,7 @@ async def run(args: argparse.Namespace) -> int:
             should_notify = elapsed > ERROR_RENOTIFY_AFTER
         if should_notify:
             try:
-                send_ntfy(
-                    args.topic,
+                notify(
                     title="Oktoberfest resale checker: monitoring broken",
                     message=f"Couldn't load the resale site: {result.error}",
                     priority="high",
@@ -145,8 +179,7 @@ async def run(args: argparse.Namespace) -> int:
         if not is_baseline_run:
             snippet = listing.text[:200].replace("\n", " ")
             try:
-                send_ntfy(
-                    args.topic,
+                notify(
                     title=f"New Oktoberfest table listing for {args.date.strftime('%b %d, %Y')}",
                     message=snippet,
                     url=listing.url,

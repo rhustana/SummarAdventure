@@ -1,8 +1,11 @@
-name: Check Oktoberfest resale listings
+# Manual-only fallback. Automatic hourly checks now run via a Claude Code
+# Remote Routine that pushes notifications through the Claude app instead
+# of ntfy -- see README "Resale listing watcher". This workflow is kept
+# around for a manual/debug run (or to switch back to ntfy) but no longer
+# fires on a schedule.
+name: Check Oktoberfest resale listings (manual fallback)
 
 on:
-  schedule:
-    - cron: "7 * * * *" # hourly, offset from the hour to avoid GitHub's busy top-of-hour slot
   workflow_dispatch:
     inputs:
       date:
@@ -37,7 +40,7 @@ jobs:
         run: |
           DATE="${{ github.event.inputs.date }}"
           DATE="${DATE:-2026-09-26}"
-          python check_resale.py --date "$DATE"
+          python check_resale.py --date "$DATE" --notify-via ntfy
 
       - name: Persist seen-listings state
         run: |
