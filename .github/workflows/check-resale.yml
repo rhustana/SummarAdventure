@@ -1,17 +1,29 @@
-# Manual-only fallback. Automatic hourly checks now run via a Claude Code
-# Remote Routine that pushes notifications through the Claude app instead
-# of ntfy -- see README "Resale listing watcher". This workflow is kept
-# around for a manual/debug run (or to switch back to ntfy) but no longer
-# fires on a schedule.
-name: Check Oktoberfest resale listings (manual fallback)
+# Hourly site check + notification queueing. GitHub's runners have normal
+# internet access (this site is unreachable from the Claude Code Remote
+# environments available on this account -- org egress policy), so this
+# workflow does the actual scraping and queues any new listing into
+# state/pending_notifications.json. A separate Claude Code Remote Routine
+# (which can push to the Claude app but can't reach this site) drains that
+# queue on its own schedule and sends the actual push notifications. See
+# README "Resale listing watcher".
+name: Check Oktoberfest resale listings
 
 on:
+  schedule:
+    - cron: "7 * * * *" # hourly, offset from the hour to avoid GitHub's busy top-of-hour slot
   workflow_dispatch:
     inputs:
       date:
         description: "Date to check (YYYY-MM-DD)"
         required: false
         default: "2026-09-26"
+      notify_via:
+        description: "Notification channel (file = queue for the Claude Routine, ntfy = direct ntfy.sh post)"
+        type: choice
+        options:
+          - file
+          - ntfy
+        default: file
 
 permissions:
   contents: write
@@ -40,14 +52,16 @@ jobs:
         run: |
           DATE="${{ github.event.inputs.date }}"
           DATE="${DATE:-2026-09-26}"
-          python check_resale.py --date "$DATE" --notify-via ntfy
+          NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
+          NOTIFY_VIA="${NOTIFY_VIA:-file}"
+          python check_resale.py --date "$DATE" --notify-via "$NOTIFY_VIA"
 
-      - name: Persist seen-listings state
+      - name: Persist state
         run: |
           if [ -n "$(git status --porcelain state/)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add state/
-            git commit -m "Update seen resale listings state [skip ci]"
+            git commit -m "Update resale watcher state [skip ci]"
             git push
           fi

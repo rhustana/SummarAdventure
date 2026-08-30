@@ -2,14 +2,20 @@
 """CLI: check the Oktoberfest resale site for new table listings on a given
 date, and notify about any listing not seen before.
 
-Two notification channels (--notify-via):
-  stdout  (default) -- prints one "NOTIFY_JSON: {...}" line per new listing
-                        and does nothing else. Meant to be run by a Claude
-                        Code Remote Routine session, which reads that output
-                        and relays it via the PushNotification tool.
+Three notification channels (--notify-via):
+  file    (default) -- appends each new listing to a JSON queue file
+                        (--queue-file, default state/pending_notifications.json)
+                        instead of sending anything itself. Used by the
+                        GitHub Actions workflow, which has real internet
+                        access to this site but can't push to a phone; a
+                        separate Claude Code Remote Routine (which can push,
+                        but can't reach this site -- see README) reads and
+                        clears that queue on its own schedule.
+  stdout  -- prints one "NOTIFY_JSON: {...}" line per new listing instead.
+             Handy for interactive/manual runs.
   ntfy    -- posts directly to an ntfy.sh topic (--topic / $NTFY_TOPIC).
-             What the GitHub Actions workflow used before switching to the
-             Claude-app push flow; kept as a fallback.
+             The original flow before switching to Claude-app push; kept as
+             a fallback.
 
 Examples:
     python check_resale.py                          # normal run (stdout)
@@ -44,6 +50,7 @@ from resale_checker.state import load_seen, mark_seen, save_seen
 DEFAULT_URL = "https://www.oktoberfest-booking.com/de#ticket-shop"
 DEFAULT_TARGET_DATE = dt.date(2026, 9, 26)  # Saturday
 DEFAULT_STATE_FILE = Path(__file__).parent / "state" / "resale_seen.json"
+DEFAULT_QUEUE_FILE = Path(__file__).parent / "state" / "pending_notifications.json"
 META_KEY = "_meta"
 ERROR_RENOTIFY_AFTER = dt.timedelta(hours=12)
 
@@ -60,11 +67,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
     p.add_argument(
         "--notify-via",
-        choices=["stdout", "ntfy"],
-        default="stdout",
-        help="stdout: print NOTIFY_JSON lines for a Claude Routine to relay (default). "
-        "ntfy: post directly to an ntfy.sh topic.",
+        choices=["file", "stdout", "ntfy"],
+        default="file",
+        help="file: queue new listings in --queue-file for a Claude Routine to relay + clear (default). "
+        "stdout: print NOTIFY_JSON lines instead. ntfy: post directly to an ntfy.sh topic.",
     )
+    p.add_argument("--queue-file", type=Path, default=DEFAULT_QUEUE_FILE, help="JSON queue file for --notify-via file")
     p.add_argument(
         "--topic",
         default=os.environ.get("NTFY_TOPIC"),
@@ -82,14 +90,37 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _append_to_queue(queue_file: Path, entry: dict) -> None:
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    if queue_file.exists():
+        queue = json.loads(queue_file.read_text(encoding="utf-8"))
+    else:
+        queue = []
+    queue.append(entry)
+    queue_file.write_text(json.dumps(queue, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def make_notifier(args: argparse.Namespace):
     """Returns notify(*, title, message, url=None, priority="default", tags=None).
 
-    Raises RuntimeError on failure to send (stdout mode never fails).
+    Raises RuntimeError on failure to send (file/stdout modes never fail).
     """
     if args.notify_via == "ntfy":
         def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
             send_ntfy(args.topic, title=title, message=message, url=url, priority=priority, tags=tags)
+        return notifier
+
+    if args.notify_via == "file":
+        def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
+            _append_to_queue(
+                args.queue_file,
+                {
+                    "title": title,
+                    "message": message,
+                    "url": url,
+                    "queued_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                },
+            )
         return notifier
 
     def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
