@@ -143,96 +143,110 @@ Other things to know:
 
 A separate tool that checks one resale site
 (`https://www.oktoberfest-booking.com/de#ticket-shop`) every hour for table
-listings on a given date, and sends you a free push notification the moment
-a **new** one appears. It never re-notifies you about a listing it already
-told you about, and it never buys or reserves anything — it only reads the
-page and messages you.
+listings on a given date, and sends a free push notification straight to
+the Claude app the moment a **new** one appears. It never re-notifies about
+a listing it already told you about, and it never buys or reserves
+anything — it only reads the page and messages you.
 
 Default target date: **Saturday, September 26, 2026**.
 
-## One-time setup (about 5 minutes)
+## How it's wired up (two halves, for one reason)
 
-**1. Get a private notification channel (no account needed):**
+This site turned out to be unreachable from every Claude Code Remote
+environment on this account (blocked by org network policy, confirmed by
+actually trying it) — but GitHub Actions runners have normal internet
+access and can't push a phone notification on their own. So the job is
+split:
 
-- On your phone, install the free **ntfy** app ([iOS](https://apps.apple.com/app/ntfy/id1625396347) / [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)), or just use [ntfy.sh](https://ntfy.sh) in a browser.
-- Pick a **topic name** that's private to you — treat it like a secret
-  password (anyone who knows it can see your notifications). A ready-made
-  random one you can use: `oktoberfest-resale-f511e5e8928ae194`
-- In the app (or on the website), **subscribe** to that exact topic name.
-  That's it — no sign-up, no email.
+1. **GitHub Actions** (`.github/workflows/check-resale.yml`) runs hourly,
+   does the actual scraping, and — instead of notifying directly — appends
+   any new listing to `state/pending_notifications.json` in the repo.
+2. **A Claude Code Remote Routine**, running on its own hourly schedule
+   (offset ~13 minutes after the GitHub Actions run, to give it time to
+   finish and push), pulls the repo, reads that queue file, sends one push
+   notification per entry via the Claude app, then clears the queue.
 
-**2. Tell the GitHub workflow your topic name:**
-
-1. On this repo's GitHub page, click **Settings** → **Secrets and variables** → **Actions**.
-2. Click **New repository secret**.
-3. Name: `NTFY_TOPIC`. Value: the topic name you subscribed to above.
-4. Click **Add secret**.
-
-**3. Turn the checker on:**
-
-1. Click the **Actions** tab.
-2. In the left sidebar, click **Check Oktoberfest resale listings**.
-3. If prompted, click **Enable workflow**.
-
-That's it. From here it runs itself, once an hour, no clicking needed.
-(You can also click **Run workflow** any time to check immediately.)
+Both halves are already set up and running — no setup needed on your end
+for the primary path. (`NTFY_TOPIC` / ntfy is no longer required; the old
+direct-to-ntfy path is still available as a manual fallback — see below.)
 
 ## What to expect
 
-- The **first run** just records whatever's already listed for the target
-  date as a baseline — you won't get notified for those, only for anything
-  that shows up *after* that first run.
-- After that, every hour it checks again, and you get a push notification
-  only for listings it hasn't shown you before.
-- Each notification includes the listing's price/description and a link —
-  tapping it opens the resale site so you can act on it yourself. Nothing
-  is ever booked or paid for automatically.
+- Notifications arrive on whatever device has **Remote Control** connected
+  to this Claude account. If you're not getting them, check that Remote
+  Control is connected (Claude app settings) — nothing else needs
+  configuring.
+- The **first real check** just records whatever's already listed for the
+  target date as a baseline — no notification for those, only for anything
+  that shows up *after* that.
+- There's a delivery lag of roughly 15–20 minutes worst case (site checked
+  hourly by GitHub Actions, relayed hourly by the Routine, offset between
+  them) rather than instant — a deliberate simplicity/reliability
+  trade-off, not a bug.
+- Each notification is generated from the listing's price/description text
+  and a link — nothing is ever booked or paid for automatically.
 
 ## Known limitations (read before relying on this)
 
-Same caveat as the first app: this was built in a sandbox with no access to
-the real site, so `resale_checker/extract.py`'s listing-detection logic
-(find a price on the page, then walk up to the nearest containing block
-that also has a date and a link) is an untested first draft, not tuned to
-this specific site's actual markup.
+`resale_checker/extract.py`'s listing-detection logic (find a price on the
+page, then walk up to the nearest containing block that also has a date
+and a link) was written without ever being able to load the real site —
+this repo was built in a sandbox with no internet access, and even the
+Claude Code Remote environment that could reach the general internet
+turned out to be blocked from this specific site. **It has never been
+verified against the real page.**
 
-**Please do a manual calibration pass before trusting it to run silently:**
+**Please sanity-check the first few real runs**, since nothing here could
+do it in advance:
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
+- Check the **Actions** tab → **Check Oktoberfest resale listings** → a
+  recent run's log for the "Checked ... N matching listing(s)" line. If N
+  is 0 when you know listings exist, or implausibly large, the heuristic
+  needs work.
+- Or run it yourself somewhere with normal internet access (your own
+  computer):
+  ```bash
+  python3 -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt
+  playwright install chromium
 
-python check_resale.py --dump
-```
+  python check_resale.py --dump
+  ```
+  This saves every price-bearing block found to `debug/candidates.json`
+  and a screenshot to `debug/resale_page.png` — no notifications sent, no
+  state touched. Check that real listings come through as single, sensible
+  blocks (not merged together, not split apart, not missing their link).
 
-This opens the page, saves every price-bearing block it found to
-`debug/candidates.json`, and a full-page screenshot to
-`debug/resale_page.png` — no notifications sent, no state touched. Check
-that real listings are being captured as single, sensible blocks (not
-merged together, not split apart, not missing their link). If they're not,
-either:
-
-- send me `debug/candidates.json` and a description of what a listing card
-  actually looks like, so the extraction logic can be corrected, or
-- if you can identify the CSS class/selector for a listing card yourself
-  (e.g. via your browser's "Inspect Element"), pass it directly:
-  `python check_resale.py --card-selector ".some-listing-class"` — this
-  skips the heuristic entirely and is far more reliable once known. Add it
-  to the `check_resale.py` step's arguments in
-  `.github/workflows/check-resale.yml` once confirmed.
+If it's off, either send me `debug/candidates.json` and a description of
+what a listing card actually looks like, or — better — if you can find the
+CSS selector for a listing card yourself (browser "Inspect Element"), pass
+it directly: `--card-selector ".some-listing-class"` skips the heuristic
+entirely. Add it to the `check_resale.py` line in
+`.github/workflows/check-resale.yml` once confirmed.
 
 Other things to know:
 
 - The dedup key prefers the listing's own link URL; if a card has no
   distinct link, it falls back to hashing the card's text, which means a
   listing whose price or wording changes slightly could look "new" again.
-- The workflow commits `state/resale_seen.json` back to the repo after
-  every run so it remembers what it's already told you about — don't edit
-  that file by hand while the workflow is enabled.
-- If the site becomes unreachable (blocked, down, redesigned), you'll get a
-  one-time "monitoring broken" push (throttled to at most once per 12
-  hours) instead of silent failure.
-- ntfy's free tier is a public broker; your topic name is the only thing
-  keeping others from seeing your notifications, so don't reuse a
-  guessable one.
+- Both `state/resale_seen.json` and `state/pending_notifications.json` are
+  committed back to the repo by automation (GitHub Actions writes both;
+  the Routine clears the second one) — don't hand-edit them while this is
+  running, and expect to see small bot commits on this branch.
+- If the site becomes unreachable (blocked, down, redesigned), the GitHub
+  Actions run queues a one-time "monitoring broken" notification
+  (throttled to at most once per 12 hours) instead of failing silently.
+- The Routine is a persistent Claude Code Remote session
+  (`session_01DEXRBjccYxeC19yckjsWgd` at the time this was set up) running
+  in a "trusted network access" environment — it costs a small amount of
+  usage on this Claude account every hour it fires, even on a no-op check.
+
+### Fallback: direct ntfy notifications instead
+
+If you'd rather not depend on Remote Control staying connected, the
+original ntfy.sh path still works: pick a private topic name, subscribe to
+it in the [ntfy app](https://ntfy.sh), add it as a repo secret named
+`NTFY_TOPIC` (Settings → Secrets and variables → Actions), then either
+re-add a `schedule:` trigger to `.github/workflows/check-resale.yml` with
+`--notify-via ntfy`, or just trigger it manually from the **Actions** tab
+with the `notify_via` input set to `ntfy`.
