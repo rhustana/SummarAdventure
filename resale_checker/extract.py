@@ -150,10 +150,17 @@ def find_listings_for_date(
     candidates: list[dict], target_date: dt.date, page_url: str
 ) -> list[Listing]:
     variants = date_format_variants(target_date)
-    listings = []
+    listings: dict[str, Listing] = {}
     for c in candidates:
         text = c["text"]
         hit = next((v for v in variants if v in text), None)
         if hit:
-            listings.append(Listing.from_candidate(c, hit, page_url))
-    return listings
+            # The card-climbing heuristic occasionally still produces more
+            # than one candidate for the same real listing (verified against
+            # the real site: multiple price leaves in one card can each
+            # settle on a different a[href]-bearing ancestor). Since they
+            # share the same dedup id, collapsing here prevents notifying
+            # multiple times for one actual new listing.
+            listing = Listing.from_candidate(c, hit, page_url)
+            listings.setdefault(listing.id, listing)
+    return list(listings.values())
