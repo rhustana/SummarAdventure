@@ -179,6 +179,8 @@ async def run(args: argparse.Namespace) -> int:
             for i in euro_positions[:20]:
                 snippet = result.page_text[max(0, i - 60): i + 20].replace("\n", " | ")
                 print(f"  euro context: {snippet!r}")
+            if len(result.page_text) < 2000:
+                print(f"Full body text (short page): {result.page_text!r}")
         if result.button_labels:
             print(f"Button labels (first {len(result.button_labels)}): {result.button_labels}")
         if result.sample_offer_row is not None:
