@@ -46,21 +46,33 @@ _CANDIDATE_JS = r"""
     priceLeaves.push(el);
   }
 
-  const seenCards = new Set();
-  const out = [];
-  for (const leaf of priceLeaves) {
+  // Climbs from `leaf` requiring both a date and an "actionable" element,
+  // per `linkSelector`, stopping as soon as both are satisfied (or MAX_CLIMB
+  // is reached, in which case the last-reached ancestor is returned as-is).
+  const climbTo = (leaf, linkSelector) => {
     let card = leaf;
     for (let depth = 0; depth < MAX_CLIMB; depth++) {
       const text = (card.textContent || '').trim();
       const hasDate = dateRe.test(text);
-      // Some sites (this one included) drive their buy/details action off a
-      // JS click handler on a <button>, not a real <a href> -- accept either
-      // as "actionable" so the climb doesn't overshoot the real card looking
-      // for a link that will never exist at this level.
-      const hasLink = !!card.querySelector('a[href], button');
-      if (hasDate && hasLink) break;
-      if (!card.parentElement || card.parentElement === document.body) break;
+      const hasLink = !!card.querySelector(linkSelector);
+      if (hasDate && hasLink) return card;
+      if (!card.parentElement || card.parentElement === document.body) return card;
       card = card.parentElement;
+    }
+    return card;
+  };
+
+  const seenCards = new Set();
+  const out = [];
+  for (const leaf of priceLeaves) {
+    // Prefer climbing to a real <a href> card first -- this site's actual
+    // "Details anzeigen" / buy link sits a bit further up than the nearest
+    // clickable button (an accordion toggle, usually), so trying href first
+    // avoids settling too early on an unrelated button and fragmenting one
+    // real listing into several candidates at different climb depths.
+    let card = climbTo(leaf, 'a[href]');
+    if (!card.querySelector('a[href]')) {
+      card = climbTo(leaf, 'button');
     }
 
     if (seenCards.has(card)) continue;
