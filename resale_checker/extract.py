@@ -53,7 +53,11 @@ _CANDIDATE_JS = r"""
     for (let depth = 0; depth < MAX_CLIMB; depth++) {
       const text = (card.textContent || '').trim();
       const hasDate = dateRe.test(text);
-      const hasLink = !!card.querySelector('a[href]');
+      // Some sites (this one included) drive their buy/details action off a
+      // JS click handler on a <button>, not a real <a href> -- accept either
+      // as "actionable" so the climb doesn't overshoot the real card looking
+      // for a link that will never exist at this level.
+      const hasLink = !!card.querySelector('a[href], button');
       if (hasDate && hasLink) break;
       if (!card.parentElement || card.parentElement === document.body) break;
       card = card.parentElement;
@@ -64,8 +68,11 @@ _CANDIDATE_JS = r"""
 
     const link = card.tagName === 'A' ? card : card.querySelector('a[href]');
     out.push({
-      text: (card.textContent || '').trim().slice(0, 800),
-      html: card.outerHTML.slice(0, 2000),
+      // Generous slices: a real card's price/date/details text can sit well
+      // past a smaller cutoff behind large blocks of whitespace and
+      // decorative icon markup (verified against the real site).
+      text: (card.textContent || '').trim().slice(0, 4000),
+      html: card.outerHTML.slice(0, 4000),
       href: link ? link.href : null,
       tag: card.tagName,
       className: (card.className || '').toString(),
