@@ -24,6 +24,10 @@ on:
           - file
           - ntfy
         default: file
+      dump:
+        description: "Debug mode: dump every price-bearing candidate + a screenshot as a workflow artifact instead of checking/notifying"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,11 +56,24 @@ jobs:
         run: |
           DATE="${{ github.event.inputs.date }}"
           DATE="${DATE:-2026-09-26}"
-          NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
-          NOTIFY_VIA="${NOTIFY_VIA:-file}"
-          python check_resale.py --date "$DATE" --notify-via "$NOTIFY_VIA"
+          if [ "${{ github.event.inputs.dump }}" = "true" ]; then
+            python check_resale.py --dump --date "$DATE"
+          else
+            NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
+            NOTIFY_VIA="${NOTIFY_VIA:-file}"
+            python check_resale.py --date "$DATE" --notify-via "$NOTIFY_VIA"
+          fi
+
+      - name: Upload debug artifact
+        if: ${{ github.event.inputs.dump == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: resale-debug
+          path: debug/
+          retention-days: 7
 
       - name: Persist state
+        if: ${{ github.event.inputs.dump != 'true' }}
         run: |
           if [ -n "$(git status --porcelain state/)" ]; then
             git config user.name "github-actions[bot]"
