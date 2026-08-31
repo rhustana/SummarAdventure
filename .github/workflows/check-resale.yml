@@ -58,6 +58,9 @@ jobs:
           DATE="${DATE:-2026-09-26}"
           if [ "${{ github.event.inputs.dump }}" = "true" ]; then
             python check_resale.py --dump --date "$DATE"
+            echo "::group::debug/candidates.json"
+            cat debug/candidates.json
+            echo "::endgroup::"
           else
             NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
             NOTIFY_VIA="${NOTIFY_VIA:-file}"
