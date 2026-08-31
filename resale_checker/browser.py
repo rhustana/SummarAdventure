@@ -22,6 +22,7 @@ class FetchResult:
     error: str | None
     page_text: str | None = None
     button_labels: list[str] | None = None
+    sample_offer_row: dict | None = None
 
 
 async def fetch_candidates(
@@ -45,6 +46,7 @@ async def fetch_candidates(
     page_url = url
     page_text: str | None = None
     button_labels: list[str] | None = None
+    sample_offer_row: dict | None = None
 
     try:
         await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
@@ -80,6 +82,43 @@ async def fetch_candidates(
                 "button",
                 "els => els.slice(0, 60).map(e => (e.innerText || '').trim().slice(0, 60)).filter(Boolean)",
             )
+            sample_offer_row = await page.evaluate(
+                r"""
+                () => {
+                  const priceRe = /€\s?\d/;
+                  const all = Array.from(document.querySelectorAll('body *'));
+                  const priceEl = all.find(el => {
+                    const own = Array.from(el.childNodes)
+                      .filter(n => n.nodeType === 3)
+                      .map(n => n.textContent).join('');
+                    return priceRe.test(own) && own.trim().length < 30;
+                  });
+                  if (!priceEl) return { found: false };
+                  const chain = [];
+                  let node = priceEl;
+                  for (let i = 0; i < 8 && node; i++) {
+                    chain.push({ tag: node.tagName, className: (node.className || '').toString(), id: node.id || null });
+                    node = node.parentElement;
+                  }
+                  let ancestor = priceEl;
+                  for (let i = 0; i < 8; i++) {
+                    const t = ancestor.textContent || '';
+                    if (t.includes('Details anzeigen') || t.includes('Summe')) break;
+                    if (!ancestor.parentElement) break;
+                    ancestor = ancestor.parentElement;
+                  }
+                  return {
+                    found: true,
+                    priceElTag: priceEl.tagName,
+                    priceElText: (priceEl.textContent || '').trim(),
+                    chain,
+                    ancestorClassName: (ancestor.className || '').toString(),
+                    ancestorHref: ancestor.tagName === 'A' ? ancestor.href : (ancestor.querySelector('a[href]')?.href || null),
+                    ancestorHtml: ancestor.outerHTML.slice(0, 6000),
+                  };
+                }
+                """
+            )
 
     except Exception as e:  # noqa: BLE001
         error = f"{type(e).__name__}: {e}"
@@ -93,4 +132,5 @@ async def fetch_candidates(
         error=error,
         page_text=page_text,
         button_labels=button_labels,
+        sample_offer_row=sample_offer_row,
     )

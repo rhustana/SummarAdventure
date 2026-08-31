@@ -181,6 +181,9 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"  euro context: {snippet!r}")
         if result.button_labels:
             print(f"Button labels (first {len(result.button_labels)}): {result.button_labels}")
+        if result.sample_offer_row is not None:
+            print("Sample offer row diagnostic:")
+            print(json.dumps(result.sample_offer_row, indent=2, ensure_ascii=False))
         return 0
 
     seen = load_seen(args.state_file)
