@@ -61,35 +61,6 @@ jobs:
             echo "::group::debug/candidates.json"
             cat debug/candidates.json
             echo "::endgroup::"
-            echo "::group::raw page diagnostics"
-            python - "$DATE" <<'PYEOF'
-import asyncio, re, sys
-from playwright.async_api import async_playwright
-
-async def main():
-    async with async_playwright() as p:
-        b = await p.chromium.launch(headless=True)
-        ctx = await b.new_context(locale="de-DE", viewport={"width": 1400, "height": 1000})
-        page = await ctx.new_page()
-        await page.goto("https://www.oktoberfest-booking.com/de#ticket-shop", timeout=30000, wait_until="domcontentloaded")
-        try:
-            await page.wait_for_load_state("networkidle", timeout=30000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(2000)
-        body_text = await page.locator("body").inner_text()
-        print("BODY_TEXT_LEN", len(body_text))
-        for m in re.finditer(r"€", body_text):
-            print("EURO_SIGN_CONTEXT:", repr(body_text[max(0,m.start()-60):m.start()+20]))
-        idx = body_text.find("Schützenlisl")
-        print("SCHUETZENLISL_CONTEXT:", repr(body_text[idx:idx+600]) if idx >= 0 else "NOT FOUND")
-        buttons = await page.eval_on_selector_all("button", "els => els.slice(0,40).map(e => (e.innerText||'').trim().slice(0,60))")
-        print("BUTTONS:", buttons)
-        await b.close()
-
-asyncio.run(main())
-PYEOF
-            echo "::endgroup::"
           else
             NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
             NOTIFY_VIA="${NOTIFY_VIA:-file}"

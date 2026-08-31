@@ -20,6 +20,8 @@ class FetchResult:
     candidates: list[dict]
     screenshot_path: str | None
     error: str | None
+    page_text: str | None = None
+    button_labels: list[str] | None = None
 
 
 async def fetch_candidates(
@@ -29,6 +31,7 @@ async def fetch_candidates(
     card_selector: str | None = None,
     screenshot_path: str | None = None,
     timeout_ms: int = 30_000,
+    capture_diagnostics: bool = False,
 ) -> FetchResult:
     context = await browser.new_context(
         user_agent=USER_AGENT,
@@ -40,6 +43,8 @@ async def fetch_candidates(
     error: str | None = None
     candidates: list[dict] = []
     page_url = url
+    page_text: str | None = None
+    button_labels: list[str] | None = None
 
     try:
         await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
@@ -69,6 +74,13 @@ async def fetch_candidates(
         if screenshot_path:
             await page.screenshot(path=screenshot_path, full_page=True)
 
+        if capture_diagnostics:
+            page_text = await page.locator("body").inner_text()
+            button_labels = await page.eval_on_selector_all(
+                "button",
+                "els => els.slice(0, 60).map(e => (e.innerText || '').trim().slice(0, 60)).filter(Boolean)",
+            )
+
     except Exception as e:  # noqa: BLE001
         error = f"{type(e).__name__}: {e}"
     finally:
@@ -79,4 +91,6 @@ async def fetch_candidates(
         candidates=candidates,
         screenshot_path=screenshot_path if screenshot_path and error is None else None,
         error=error,
+        page_text=page_text,
+        button_labels=button_labels,
     )

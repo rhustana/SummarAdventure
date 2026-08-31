@@ -154,6 +154,7 @@ async def run(args: argparse.Namespace) -> int:
                 card_selector=args.card_selector,
                 screenshot_path=screenshot_path,
                 timeout_ms=args.timeout,
+                capture_diagnostics=args.dump,
             )
         finally:
             await browser.close()
@@ -170,6 +171,16 @@ async def run(args: argparse.Namespace) -> int:
             print(f"Screenshot: {result.screenshot_path}")
         if result.error:
             print(f"Page load error: {result.error}", file=sys.stderr)
+
+        if result.page_text is not None:
+            print(f"Full body text length: {len(result.page_text)}")
+            euro_positions = [i for i, ch in enumerate(result.page_text) if ch == "€"]
+            print(f"'€' occurrences on page: {len(euro_positions)}")
+            for i in euro_positions[:20]:
+                snippet = result.page_text[max(0, i - 60): i + 20].replace("\n", " | ")
+                print(f"  euro context: {snippet!r}")
+        if result.button_labels:
+            print(f"Button labels (first {len(result.button_labels)}): {result.button_labels}")
         return 0
 
     seen = load_seen(args.state_file)
