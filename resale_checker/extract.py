@@ -31,7 +31,12 @@ _CANDIDATE_JS = r"""
 (priceSource) => {
   const priceRe = new RegExp(priceSource);
   const dateRe = /\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}|\d{1,2}\.\s?(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)/i;
-  const MAX_CLIMB = 6;
+  // Verified against the real site: some price leaves (line items nested
+  // inside an "Inkludierte Leistungen" cost breakdown) sit 8+ levels below
+  // the actual card's <a href>, so 6 wasn't enough headroom and left some
+  // leaves stuck on a shallower, href-less ancestor -- fragmenting one
+  // listing into multiple candidates.
+  const MAX_CLIMB = 12;
 
   const all = Array.from(document.querySelectorAll('body *'));
   const priceLeaves = [];
