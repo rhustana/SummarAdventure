@@ -1,16 +1,19 @@
-# Hourly site check + notification queueing. GitHub's runners have normal
-# internet access (this site is unreachable from the Claude Code Remote
-# environments available on this account -- org egress policy), so this
-# workflow does the actual scraping and queues any new listing into
+# Manual-only site check + notification queueing. GitHub's runners have
+# normal internet access (this site is unreachable from the Claude Code
+# Remote environments available on this account -- org egress policy), so
+# this workflow does the actual scraping and queues any new listing into
 # state/pending_notifications.json. A separate Claude Code Remote Routine
 # (which can push to the Claude app but can't reach this site) drains that
 # queue on its own schedule and sends the actual push notifications. See
 # README "Resale listing watcher".
+#
+# The automatic hourly schedule was removed at the user's request (too many
+# GitHub Actions emails/runs) -- click "Run workflow" in the Actions tab to
+# check manually, or re-add a `schedule:` trigger here to resume automatic
+# checks.
 name: Check Oktoberfest resale listings
 
 on:
-  schedule:
-    - cron: "7 * * * *" # hourly, offset from the hour to avoid GitHub's busy top-of-hour slot
   workflow_dispatch:
     inputs:
       date:
