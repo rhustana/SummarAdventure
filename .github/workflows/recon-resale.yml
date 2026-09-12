@@ -1,0 +1,49 @@
+# One-off reconnaissance: dump the resale site's real rendered markup into
+# this job's log, so the listing extractor can be written against what the
+# page actually contains instead of guessed at.
+#
+# Needed because the Claude Code environments that author this repo are
+# blocked from oktoberfest-booking.com by org egress policy, while GitHub's
+# runners can reach it normally. Manual trigger only; read-only; writes no
+# state and sends no notifications.
+name: Recon Oktoberfest resale markup
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Target date (YYYY-MM-DD)"
+        required: false
+        default: "2026-09-26"
+      url:
+        description: "URL to inspect"
+        required: false
+        default: "https://www.oktoberfest-booking.com/de#ticket-shop"
+      body_chars:
+        description: "How much rendered body text to print"
+        required: false
+        default: "18000"
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - run: playwright install --with-deps chromium
+
+      - name: Recon
+        run: |
+          python recon_resale.py \
+            --url "${{ inputs.url }}" \
+            --date "${{ inputs.date }}" \
+            --body-chars "${{ inputs.body_chars }}"
