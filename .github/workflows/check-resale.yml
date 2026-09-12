@@ -60,10 +60,13 @@ jobs:
           DATE="${{ github.event.inputs.date }}"
           DATE="${DATE:-2026-09-26}"
           if [ "${{ github.event.inputs.dump }}" = "true" ]; then
-            python check_resale.py --dump --date "$DATE"
-            echo "::group::debug/candidates.json"
-            cat debug/candidates.json
-            echo "::endgroup::"
+            # Recon mode: dump the site's real rendered markup into this log.
+            # Deliberately routed through the pre-existing `dump` input --
+            # this workflow is dispatchable only because it is registered
+            # from the default branch, so reusing an input that exists in
+            # that version too keeps dispatch validation happy while still
+            # running THIS branch's script.
+            python recon_resale.py --date "$DATE" --body-chars 18000
           else
             NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
             NOTIFY_VIA="${NOTIFY_VIA:-file}"
