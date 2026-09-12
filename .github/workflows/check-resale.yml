@@ -1,19 +1,23 @@
-# Manual-only site check + notification queueing. GitHub's runners have
-# normal internet access (this site is unreachable from the Claude Code
-# Remote environments available on this account -- org egress policy), so
-# this workflow does the actual scraping and queues any new listing into
-# state/pending_notifications.json. A separate Claude Code Remote Routine
-# (which can push to the Claude app but can't reach this site) drains that
-# queue on its own schedule and sends the actual push notifications. See
-# README "Resale listing watcher".
+# Watches oktoberfest-booking.com for new resale table offers on a target
+# date and pushes straight to your phone via ntfy.sh.
 #
-# The automatic hourly schedule was removed at the user's request (too many
-# GitHub Actions emails/runs) -- click "Run workflow" in the Actions tab to
-# check manually, or re-add a `schedule:` trigger here to resume automatic
-# checks.
+# Design notes, since the previous version of this file was switched off:
+#
+#  * One stage, not two. The old flow queued hits into a committed JSON file
+#    for a separate hourly Claude Routine to relay, which cost Claude usage
+#    every hour forever, added 15-20 minutes of lag, and broke whenever
+#    Remote Control disconnected. ntfy posts direct from this runner.
+#  * No failure emails. A transient bad page load no longer fails the job --
+#    that noise is why automatic checks got removed. Real breakage is
+#    reported by a throttled push alarm from the script instead.
+#  * State is committed only when it actually changes, so quiet periods
+#    produce no commits at all.
 name: Check Oktoberfest resale listings
 
 on:
+  schedule:
+    # Every 10 minutes, deliberately off the :00/:30 marks.
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
     inputs:
       date:
@@ -21,14 +25,18 @@ on:
         required: false
         default: "2026-09-26"
       notify_via:
-        description: "Notification channel (file = queue for the Claude Routine, ntfy = direct ntfy.sh post)"
+        description: "ntfy = push to your phone, stdout = dry run (log only)"
         type: choice
         options:
-          - file
           - ntfy
-        default: file
+          - stdout
+        default: ntfy
+      show_all:
+        description: "Also log every offer found for every date"
+        type: boolean
+        default: false
       dump:
-        description: "Debug mode: dump every price-bearing candidate + a screenshot as a workflow artifact instead of checking/notifying"
+        description: "Recon mode: dump the site's raw rendered markup to the log"
         type: boolean
         default: false
 
@@ -53,36 +61,50 @@ jobs:
 
       - run: playwright install --with-deps chromium
 
+      # Cheap guard against a silent regression in the offer parser: runs
+      # against a fixture captured from the real site.
+      - name: Parser self-test
+        run: python check_resale.py --self-test
+
       - name: Run resale check
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
-          DATE="${{ github.event.inputs.date }}"
+          DATE="${{ inputs.date }}"
           DATE="${DATE:-2026-09-26}"
-          if [ "${{ github.event.inputs.dump }}" = "true" ]; then
-            # Recon mode: dump the site's real rendered markup into this log.
-            # Deliberately routed through the pre-existing `dump` input --
-            # this workflow is dispatchable only because it is registered
-            # from the default branch, so reusing an input that exists in
-            # that version too keeps dispatch validation happy while still
-            # running THIS branch's script.
+
+          if [ "${{ inputs.dump }}" = "true" ]; then
             python recon_resale.py --date "$DATE" --body-chars 18000
-          else
-            NOTIFY_VIA="${{ github.event.inputs.notify_via }}"
-            NOTIFY_VIA="${NOTIFY_VIA:-file}"
-            python check_resale.py --date "$DATE" --notify-via "$NOTIFY_VIA"
+            exit 0
           fi
 
-      - name: Upload debug artifact
-        if: ${{ github.event.inputs.dump == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: resale-debug
-          path: debug/
-          retention-days: 7
+          NOTIFY_VIA="${{ inputs.notify_via }}"
+          NOTIFY_VIA="${NOTIFY_VIA:-ntfy}"
 
-      - name: Persist state
-        if: ${{ github.event.inputs.dump != 'true' }}
+          SHOW_ALL=""
+          if [ "${{ inputs.show_all }}" = "true" ]; then
+            SHOW_ALL="--show-all"
+          fi
+
+          if [ "$NOTIFY_VIA" = "ntfy" ] && [ -z "$NTFY_TOPIC" ]; then
+            echo "::error::NTFY_TOPIC secret is not set -- add it under Settings > Secrets and variables > Actions, or run with notify_via=stdout."
+            exit 1
+          fi
+
+          # A bad page load must not fail the job: scheduled-workflow failures
+          # send email on every occurrence, and that noise is what got the
+          # previous automation disabled. The script raises a throttled push
+          # alarm for genuine breakage instead.
+          set +e
+          python check_resale.py --date "$DATE" --notify-via "$NOTIFY_VIA" $SHOW_ALL
+          CODE=$?
+          set -e
+          if [ $CODE -ne 0 ]; then
+            echo "::warning::Check returned $CODE (site unreachable or parsing broke). A push alarm is sent at most once per 12h."
+          fi
+
+      - name: Persist state (only when it changed)
+        if: ${{ inputs.dump != 'true' }}
         run: |
           if [ -n "$(git status --porcelain state/)" ]; then
             git config user.name "github-actions[bot]"
@@ -90,4 +112,6 @@ jobs:
             git add state/
             git commit -m "Update resale watcher state [skip ci]"
             git push
+          else
+            echo "No state change -- nothing to commit."
           fi

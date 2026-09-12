@@ -1,33 +1,16 @@
 #!/usr/bin/env python3
-"""CLI: check the Oktoberfest resale site for new table listings on a given
-date, and notify about any listing not seen before.
+"""Watch the Oktoberfest resale shop for new table offers on a target date.
 
-Three notification channels (--notify-via):
-  file    (default) -- appends each new listing to a JSON queue file
-                        (--queue-file, default state/pending_notifications.json)
-                        instead of sending anything itself. Used by the
-                        GitHub Actions workflow, which has real internet
-                        access to this site but can't push to a phone; a
-                        separate Claude Code Remote Routine (which can push,
-                        but can't reach this site -- see README) reads and
-                        clears that queue on its own schedule.
-  stdout  -- prints one "NOTIFY_JSON: {...}" line per new listing instead.
-             Handy for interactive/manual runs.
-  ntfy    -- posts directly to an ntfy.sh topic (--topic / $NTFY_TOPIC).
-             The original flow before switching to Claude-app push; kept as
-             a fallback.
+Reads the shop, parses every offer, keeps the ones matching the target date,
+and pushes a notification for any offer it has not already reported. It never
+books, reserves, or pays for anything -- it only reads the page and messages
+you.
 
-Examples:
-    python check_resale.py                          # normal run (stdout)
-    python check_resale.py --headed                 # watch it work
-    python check_resale.py --notify-via ntfy --topic my-topic
-    python check_resale.py --dump                    # debug: save every
-                                                       # price-bearing block
-                                                       # found on the page,
-                                                       # no notifications sent
-    python check_resale.py --card-selector ".ticket-card"   # precise mode,
-                                                              # once you know
-                                                              # the real markup
+Default target date: Saturday, 26 September 2026.
+
+    python check_resale.py --date 2026-09-26 --notify-via ntfy --topic <topic>
+    python check_resale.py --notify-via stdout        # dry run, no push
+    python check_resale.py --self-test                # parser regression test
 """
 
 from __future__ import annotations
@@ -38,215 +21,231 @@ import datetime as dt
 import json
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
-from playwright.async_api import async_playwright
-
-from resale_checker.browser import fetch_candidates
-from resale_checker.extract import find_listings_for_date
 from resale_checker.notify import send_ntfy
+from resale_checker.parse import offer_to_dict, offers_for_date, parse_offers
 from resale_checker.state import load_seen, mark_seen, save_seen
 
 DEFAULT_URL = "https://www.oktoberfest-booking.com/de#ticket-shop"
-DEFAULT_TARGET_DATE = dt.date(2026, 9, 26)  # Saturday
+DEFAULT_TARGET_DATE = dt.date(2026, 9, 26)
 DEFAULT_STATE_FILE = Path(__file__).parent / "state" / "resale_seen.json"
-DEFAULT_QUEUE_FILE = Path(__file__).parent / "state" / "pending_notifications.json"
+FIXTURE = Path(__file__).parent / "tests" / "fixture_shop.txt"
+
 META_KEY = "_meta"
 ERROR_RENOTIFY_AFTER = dt.timedelta(hours=12)
 
+# If the page loads fine but yields no offers for ANY date, the site changed
+# shape and this watcher has gone blind. That is the failure mode that made
+# the previous version look healthy for weeks while recording nothing usable,
+# so it gets an alarm of its own.
+BLIND_THRESHOLD = 0
+
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--url", default=DEFAULT_URL, help="Resale site URL to check")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument(
         "--date",
         type=lambda s: dt.date.fromisoformat(s),
         default=DEFAULT_TARGET_DATE,
-        help=f"Target date, YYYY-MM-DD (default: {DEFAULT_TARGET_DATE.isoformat()})",
+        help=f"Target date, YYYY-MM-DD (default {DEFAULT_TARGET_DATE.isoformat()})",
     )
     p.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
     p.add_argument(
         "--notify-via",
-        choices=["file", "stdout", "ntfy"],
-        default="file",
-        help="file: queue new listings in --queue-file for a Claude Routine to relay + clear (default). "
-        "stdout: print NOTIFY_JSON lines instead. ntfy: post directly to an ntfy.sh topic.",
+        choices=["ntfy", "stdout"],
+        default="ntfy",
+        help="ntfy: push to an ntfy.sh topic. stdout: print instead (dry run).",
     )
-    p.add_argument("--queue-file", type=Path, default=DEFAULT_QUEUE_FILE, help="JSON queue file for --notify-via file")
+    p.add_argument("--topic", default=os.environ.get("NTFY_TOPIC"), help="ntfy.sh topic (or $NTFY_TOPIC)")
+    p.add_argument("--timeout", type=int, default=45_000)
+    p.add_argument("--headed", action="store_true")
+    p.add_argument("--screenshot", default=None, help="Save a full-page screenshot here")
     p.add_argument(
-        "--topic",
-        default=os.environ.get("NTFY_TOPIC"),
-        help="ntfy.sh topic to notify, only used with --notify-via ntfy (default: $NTFY_TOPIC env var)",
-    )
-    p.add_argument("--card-selector", default=None, help="CSS selector for listing cards, once known (see README)")
-    p.add_argument("--timeout", type=int, default=30_000, help="Navigation timeout in ms")
-    p.add_argument("--headed", action="store_true", help="Run with a visible browser window")
-    p.add_argument(
-        "--dump",
+        "--show-all",
         action="store_true",
-        help="Debug mode: save every price-bearing candidate block + a screenshot to debug/, "
-        "send no notifications, and don't touch state",
+        help="Also print every offer found for every date (useful when checking it works)",
     )
+    p.add_argument("--self-test", action="store_true", help="Run the parser against the committed fixture and exit")
     return p.parse_args()
 
 
-def _append_to_queue(queue_file: Path, entry: dict) -> None:
-    queue_file.parent.mkdir(parents=True, exist_ok=True)
-    if queue_file.exists():
-        queue = json.loads(queue_file.read_text(encoding="utf-8"))
-    else:
-        queue = []
-    queue.append(entry)
-    queue_file.write_text(json.dumps(queue, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def self_test() -> int:
+    if not FIXTURE.exists():
+        print(f"fixture missing: {FIXTURE}", file=sys.stderr)
+        return 1
+    offers = parse_offers(FIXTURE.read_text(encoding="utf-8"))
+    print(f"parsed {len(offers)} offers from fixture")
+    for o in offers:
+        print(f"  {o.date}  {o.summary()}")
+
+    failures = []
+    if len(offers) != 8:
+        failures.append(f"expected 8 offers, got {len(offers)}")
+
+    first = offers[0] if offers else None
+    if not first or first.tent != "Fischer Vroni Festzelt":
+        failures.append(f"first tent wrong: {first.tent if first else None}")
+    if not first or first.total != "531,90":
+        # Guards the subtle bit: the total must come from Summe, not from the
+        # "20 x Bier ... € 300,00" line item above it.
+        failures.append(f"first total wrong: {first.total if first else None} (want 531,90)")
+    if not first or first.persons != 10 or first.tables != 1:
+        failures.append("first persons/tables wrong")
+    if not first or first.time != "11:00-16:00":
+        failures.append(f"first time wrong: {first.time if first else None}")
+
+    if any(o.tent in {"Infos zum Zelt", "Details anzeigen"} for o in offers):
+        failures.append("decoration text leaked into a tent name")
+
+    ids = [o.id for o in offers]
+    if len(set(ids)) != len(ids):
+        failures.append("ids collided across distinct offers")
+
+    if failures:
+        print("\nSELF-TEST FAILED:", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    print("\nself-test OK")
+    return 0
 
 
 def make_notifier(args: argparse.Namespace):
-    """Returns notify(*, title, message, url=None, priority="default", tags=None).
-
-    Raises RuntimeError on failure to send (file/stdout modes never fail).
-    """
     if args.notify_via == "ntfy":
-        def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
+        def notifier(*, title, message, url=None, priority="default", tags=None):
             send_ntfy(args.topic, title=title, message=message, url=url, priority=priority, tags=tags)
         return notifier
 
-    if args.notify_via == "file":
-        def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
-            _append_to_queue(
-                args.queue_file,
-                {
-                    "title": title,
-                    "message": message,
-                    "url": url,
-                    "queued_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                },
-            )
-        return notifier
-
-    def notifier(*, title: str, message: str, url: str | None = None, priority: str = "default", tags: str | None = None):
-        print("NOTIFY_JSON: " + json.dumps({"title": title, "message": message, "url": url}, ensure_ascii=False))
-
+    def notifier(*, title, message, url=None, priority="default", tags=None):
+        print("NOTIFY: " + json.dumps(
+            {"title": title, "message": message, "url": url}, ensure_ascii=False))
     return notifier
 
 
+def _maybe_alarm(notify, seen: dict, state_file: Path, *, title: str, message: str) -> None:
+    """Send a health alarm at most once per ERROR_RENOTIFY_AFTER."""
+    meta = seen.get(META_KEY, {})
+    last = meta.get("last_error_notified_at")
+    if last:
+        elapsed = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(last)
+        if elapsed <= ERROR_RENOTIFY_AFTER:
+            return
+    try:
+        notify(title=title, message=message, priority="high", tags="warning")
+        meta["last_error_notified_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        seen[META_KEY] = meta
+        save_seen(state_file, seen)
+    except RuntimeError as e:
+        print(f"failed to send health alarm: {e}", file=sys.stderr)
+
+
 async def run(args: argparse.Namespace) -> int:
-    if not args.dump and args.notify_via == "ntfy" and not args.topic:
-        print(
-            "No ntfy topic set. Pass --topic or set the NTFY_TOPIC environment variable.",
-            file=sys.stderr,
-        )
+    if args.notify_via == "ntfy" and not args.topic:
+        print("No ntfy topic set: pass --topic or set NTFY_TOPIC.", file=sys.stderr)
         return 1
 
     notify = make_notifier(args)
+    seen = load_seen(args.state_file)
 
-    screenshot_path = None
-    if args.dump:
-        debug_dir = Path("debug")
-        debug_dir.mkdir(exist_ok=True)
-        screenshot_path = str(debug_dir / "resale_page.png")
+    from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=not args.headed)
+        browser = await p.chromium.launch(
+            headless=not args.headed,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         try:
-            result = await fetch_candidates(
-                browser,
-                args.url,
-                card_selector=args.card_selector,
-                screenshot_path=screenshot_path,
-                timeout_ms=args.timeout,
-                capture_diagnostics=args.dump,
+            from resale_checker.browser import fetch_body_text
+            result = await fetch_body_text(
+                browser, args.url, timeout_ms=args.timeout, screenshot_path=args.screenshot
             )
         finally:
             await browser.close()
 
-    if args.dump:
-        debug_dir = Path("debug")
-        candidates_path = debug_dir / "candidates.json"
-        candidates_path.write_text(
-            json.dumps(result.candidates, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        print(f"Found {len(result.candidates)} price-bearing block(s).")
-        print(f"Candidates: {candidates_path}")
-        if result.screenshot_path:
-            print(f"Screenshot: {result.screenshot_path}")
-        if result.error:
-            print(f"Page load error: {result.error}", file=sys.stderr)
-
-        if result.page_text is not None:
-            print(f"Full body text length: {len(result.page_text)}")
-            euro_positions = [i for i, ch in enumerate(result.page_text) if ch == "€"]
-            print(f"'€' occurrences on page: {len(euro_positions)}")
-            for i in euro_positions[:20]:
-                snippet = result.page_text[max(0, i - 60): i + 20].replace("\n", " | ")
-                print(f"  euro context: {snippet!r}")
-            if len(result.page_text) < 2000:
-                print(f"Full body text (short page): {result.page_text!r}")
-        if result.button_labels:
-            print(f"Button labels (first {len(result.button_labels)}): {result.button_labels}")
-        if result.sample_offer_row is not None:
-            print("Sample offer row diagnostic:")
-            print(json.dumps(result.sample_offer_row, indent=2, ensure_ascii=False))
-        return 0
-
-    seen = load_seen(args.state_file)
-    meta = seen.get(META_KEY, {})
-    is_baseline_run = not any(k for k in seen if k != META_KEY)
-
     if result.error:
         print(f"Page load error: {result.error}", file=sys.stderr)
-        last_notified = meta.get("last_error_notified_at")
-        should_notify = True
-        if last_notified:
-            elapsed = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(last_notified)
-            should_notify = elapsed > ERROR_RENOTIFY_AFTER
-        if should_notify:
-            try:
-                notify(
-                    title="Oktoberfest resale checker: monitoring broken",
-                    message=f"Couldn't load the resale site: {result.error}",
-                    priority="high",
-                    tags="warning",
-                )
-                meta["last_error_notified_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-                seen[META_KEY] = meta
-                save_seen(args.state_file, seen)
-            except RuntimeError as e:
-                print(str(e), file=sys.stderr)
+        _maybe_alarm(
+            notify, seen, args.state_file,
+            title="Oktoberfest watcher: can't read the site",
+            message=f"{result.error} -- the watcher is blind until this is fixed.",
+        )
         return 1
 
-    listings = find_listings_for_date(result.candidates, args.date, result.page_url)
-    new_listings = [l for l in listings if l.id not in seen]
+    all_offers = parse_offers(result.body_text)
+    matching = offers_for_date(all_offers, args.date)
 
-    print(f"Checked {args.url} for {args.date.isoformat()}: {len(listings)} matching listing(s), {len(new_listings)} new.")
+    by_date = Counter(o.date for o in all_offers)
+    print(f"Checked {result.page_url}")
+    print(f"  offers on page (all dates): {len(all_offers)}")
+    print(f"  dates present: {dict(sorted(by_date.items()))}")
+    print(f"  offers for {args.date.isoformat()}: {len(matching)}")
 
-    if is_baseline_run and listings:
-        print("First run (no prior state) -- recording existing listings as a baseline without notifying.")
+    if args.show_all:
+        print("\n  --- every offer on the page ---")
+        for o in sorted(all_offers, key=lambda x: (x.date, x.tent)):
+            print(f"    {o.date}  {o.summary()}")
 
-    for listing in new_listings:
-        if not is_baseline_run:
-            snippet = listing.text[:200].replace("\n", " ")
+    # Blind-watcher guard: page rendered, but nothing parsed at all.
+    if len(all_offers) <= BLIND_THRESHOLD:
+        print("No offers parsed for ANY date -- the page shape probably changed.", file=sys.stderr)
+        _maybe_alarm(
+            notify, seen, args.state_file,
+            title="Oktoberfest watcher: parsing broke",
+            message="The site loaded but no offers could be parsed. The layout likely changed; "
+                    "the watcher can't see new tables until it's updated.",
+        )
+        return 1
+
+    is_baseline = not any(k for k in seen if k != META_KEY)
+    new_offers = [o for o in matching if o.id not in seen]
+
+    if is_baseline:
+        # First healthy run: record what's already listed so the very first
+        # check doesn't fire an alert for offers that were there all along.
+        if matching:
+            print(f"  baseline run: recording {len(matching)} existing offer(s) without notifying")
+        for o in matching:
+            mark_seen(seen, o.id, o.summary(), result.page_url)
+    else:
+        print(f"  new since last check: {len(new_offers)}")
+        for o in new_offers:
             try:
                 notify(
-                    title=f"New Oktoberfest table listing for {args.date.strftime('%b %d, %Y')}",
-                    message=snippet,
-                    url=listing.url,
-                    priority="high",
+                    title=f"🍻 Table for {args.date.strftime('%a %d %b %Y')}: {o.tent}",
+                    message=f"{o.summary()}\n\nBook fast — resale tables go quickly.",
+                    url=result.page_url,
+                    priority="urgent",
                     tags="beer,tada",
                 )
-                print(f"  notified: {snippet}")
+                print(f"    NOTIFIED: {o.summary()}")
             except RuntimeError as e:
-                print(f"  FAILED to notify for listing {listing.id}: {e}", file=sys.stderr)
-                continue  # don't mark as seen if we couldn't notify -- retry next run
-        mark_seen(seen, listing.id, listing.text, listing.url)
+                # Don't mark as seen -- retry on the next run rather than
+                # silently swallowing the one alert that mattered.
+                print(f"    FAILED to notify ({e}); will retry next run", file=sys.stderr)
+                continue
+            mark_seen(seen, o.id, o.summary(), result.page_url)
 
-    seen.pop(META_KEY, None)  # clear any prior error-throttle now that we're healthy
+    # Drop offers that are no longer listed, so a table that disappears and
+    # relists later alerts again.
+    live_ids = {o.id for o in matching}
+    for stale in [k for k in seen if k != META_KEY and k not in live_ids]:
+        del seen[stale]
 
+    seen.pop(META_KEY, None)  # healthy run clears any error throttle
     save_seen(args.state_file, seen)
     return 0
 
 
 def main() -> None:
     args = parse_args()
+    if args.self_test:
+        sys.exit(self_test())
     sys.exit(asyncio.run(run(args)))
 
 

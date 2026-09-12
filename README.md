@@ -141,112 +141,135 @@ Other things to know:
 
 # Resale listing watcher (second app)
 
-A separate tool that checks one resale site
-(`https://www.oktoberfest-booking.com/de#ticket-shop`) every hour for table
-listings on a given date, and sends a free push notification straight to
-the Claude app the moment a **new** one appears. It never re-notifies about
-a listing it already told you about, and it never buys or reserves
-anything — it only reads the page and messages you.
+Watches the official resale marketplace
+(`https://www.oktoberfest-booking.com/de#ticket-shop`) every 10 minutes for
+table offers on a target date, and pushes a notification to your phone the
+moment a **new** one appears. It never re-notifies about an offer it has
+already reported, and it never books, reserves, or pays for anything — it
+only reads the page and messages you.
 
-Default target date: **Saturday, September 26, 2026**.
+Default target date: **Saturday, 26 September 2026**.
 
-## How it's wired up (two halves, for one reason)
+## Setup (one time, ~2 minutes)
 
-This site turned out to be unreachable from every Claude Code Remote
-environment on this account (blocked by org network policy, confirmed by
-actually trying it) — but GitHub Actions runners have normal internet
-access and can't push a phone notification on their own. So the job is
-split:
+Notifications go through [ntfy.sh](https://ntfy.sh) — free, instant, no
+account required.
 
-1. **GitHub Actions** (`.github/workflows/check-resale.yml`) runs hourly,
-   does the actual scraping, and — instead of notifying directly — appends
-   any new listing to `state/pending_notifications.json` in the repo.
-2. **A Claude Code Remote Routine**, running on its own hourly schedule
-   (offset ~13 minutes after the GitHub Actions run, to give it time to
-   finish and push), pulls the repo, reads that queue file, sends one push
-   notification per entry via the Claude app, then clears the queue.
+1. Install the **ntfy** app (iOS App Store / Google Play / F-Droid).
+2. Tap **+** to subscribe to a topic. Invent a long, unguessable name —
+   anyone who knows a topic name can read and post to it. Something like
+   `wiesn-tisch-a7f3k9q2x` rather than `oktoberfest`.
+3. In this repo: **Settings → Secrets and variables → Actions → New
+   repository secret**. Name it `NTFY_TOPIC`, value is the topic name only
+   (not the full URL).
 
-Both halves are already set up and running — no setup needed on your end
-for the primary path. (`NTFY_TOPIC` / ntfy is no longer required; the old
-direct-to-ntfy path is still available as a manual fallback — see below.)
+That's it. The watcher is already scheduled and will start checking on its
+own.
+
+To confirm it works end to end, go to **Actions → Check Oktoberfest resale
+listings → Run workflow**, set **show_all** to `true`, and check the log:
+you should see a list of every offer currently on the site, grouped by date.
 
 ## What to expect
 
-- Notifications arrive on whatever device has **Remote Control** connected
-  to this Claude account. If you're not getting them, check that Remote
-  Control is connected (Claude app settings) — nothing else needs
-  configuring.
-- The **first real check** just records whatever's already listed for the
-  target date as a baseline — no notification for those, only for anything
-  that shows up *after* that.
-- There's a delivery lag of roughly 15–20 minutes worst case (site checked
-  hourly by GitHub Actions, relayed hourly by the Routine, offset between
-  them) rather than instant — a deliberate simplicity/reliability
-  trade-off, not a bug.
-- Each notification is generated from the listing's price/description text
-  and a link — nothing is ever booked or paid for automatically.
+- **The first run records a baseline.** Whatever is already listed for your
+  date is recorded silently, so you don't get an alert for offers that were
+  already there. Only offers appearing *after* that trigger a push.
+- Alerts fire at **urgent** priority so they break through Do Not Disturb.
+- If an offer disappears and later relists, you get alerted again — the
+  watcher forgets offers that are no longer on the page.
 
-## Known limitations (read before relying on this)
+## How it works
 
-`resale_checker/extract.py`'s listing-detection logic (find a price on the
-page, then walk up to the nearest containing block that also has a date
-and a link) was written without ever being able to load the real site —
-this repo was built in a sandbox with no internet access, and even the
-Claude Code Remote environment that could reach the general internet
-turned out to be blocked from this specific site. **It has never been
-verified against the real page.**
+`resale_checker/parse.py` reads the shop's **rendered text**, not its DOM.
+Each offer renders in a strictly regular shape:
 
-**Please sanity-check the first few real runs**, since nothing here could
-do it in advance:
+```
+Infos zum Zelt
+Fischer Vroni Festzelt
+Montag, 28.09.2026
+Mittag
+11:00-16:00 Uhr
+10 Personen
+1 Tisch(e)
+Inkludierte Leistungen
+20 x Bier (á € 15,00)
+€ 300,00
+...
+Summe
+€ 531,90
+Details anzeigen
+```
 
-- Check the **Actions** tab → **Check Oktoberfest resale listings** → a
-  recent run's log for the "Checked ... N matching listing(s)" line. If N
-  is 0 when you know listings exist, or implausibly large, the heuristic
-  needs work.
-- Or run it yourself somewhere with normal internet access (your own
-  computer):
-  ```bash
-  python3 -m venv .venv && source .venv/bin/activate
-  pip install -r requirements.txt
-  playwright install chromium
+The parser anchors on the `Weekday, DD.MM.YYYY` line and reads the fields
+that follow. Two details matter: the price it records is the one after
+`Summe` (the line items above it are the cost breakdown, not the total), and
+an offer's identity is a hash of tent + date + slot + time + seats + total,
+so re-rendering the page doesn't make an existing offer look new.
 
-  python check_resale.py --dump
-  ```
-  This saves every price-bearing block found to `debug/candidates.json`
-  and a screenshot to `debug/resale_page.png` — no notifications sent, no
-  state touched. Check that real listings come through as single, sensible
-  blocks (not merged together, not split apart, not missing their link).
+This replaced a DOM-walking extractor that anchored on prices and climbed to
+the nearest ancestor with a link. On this site that lands on the per-tent
+header card (`Infos zum Zelt / Hacker Festzelt`, href
+`/de/<tent>-tischreservierung`) rather than on a bookable offer — so the old
+watcher recorded tent pages, and could never have fired on an actual table.
+Text parsing is also immune to the Tailwind/Livewire class churn that made
+the DOM approach so fragile.
 
-If it's off, either send me `debug/candidates.json` and a description of
-what a listing card actually looks like, or — better — if you can find the
-CSS selector for a listing card yourself (browser "Inspect Element"), pass
-it directly: `--card-selector ".some-listing-class"` skips the heuristic
-entirely. Add it to the `check_resale.py` line in
-`.github/workflows/check-resale.yml` once confirmed.
+`python check_resale.py --self-test` runs the parser against
+`tests/fixture_shop.txt`, captured from the live site. The workflow runs it
+before every check, so a parser regression fails loudly instead of silently
+returning zero offers.
 
-Other things to know:
+## Running it yourself
 
-- The dedup key prefers the listing's own link URL; if a card has no
-  distinct link, it falls back to hashing the card's text, which means a
-  listing whose price or wording changes slightly could look "new" again.
-- Both `state/resale_seen.json` and `state/pending_notifications.json` are
-  committed back to the repo by automation (GitHub Actions writes both;
-  the Routine clears the second one) — don't hand-edit them while this is
-  running, and expect to see small bot commits on this branch.
-- If the site becomes unreachable (blocked, down, redesigned), the GitHub
-  Actions run queues a one-time "monitoring broken" notification
-  (throttled to at most once per 12 hours) instead of failing silently.
-- The Routine is a persistent Claude Code Remote session
-  (`session_01DEXRBjccYxeC19yckjsWgd` at the time this was set up) running
-  in a "trusted network access" environment — it costs a small amount of
-  usage on this Claude account every hour it fires, even on a no-op check.
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
 
-### Fallback: direct ntfy notifications instead
+# Dry run: print every offer found, notify nobody
+python check_resale.py --notify-via stdout --show-all
 
-If you'd rather not depend on Remote Control staying connected, the
-original ntfy.sh path still works: pick a private topic name, subscribe to
-it in the [ntfy app](https://ntfy.sh), add it as a repo secret named
-`NTFY_TOPIC` (Settings → Secrets and variables → Actions), then either
-re-add a `schedule:` trigger to `.github/workflows/check-resale.yml` with
-`--notify-via ntfy`, or just trigger it manually from the **Actions** tab
-with the `notify_via` input set to `ntfy`.
+# Watch it work in a real browser window
+python check_resale.py --notify-via stdout --headed
+
+# Dump the site's raw rendered markup (for when the layout changes)
+python recon_resale.py --date 2026-09-26
+```
+
+## Limits worth knowing
+
+- **Scheduled GitHub Actions runs are best-effort.** GitHub delays cron
+  workflows under load, sometimes well past the nominal interval. The
+  10-minute schedule is a target, not a guarantee.
+- **The site sells its own alert, and it beats this one.** The page
+  advertises a *Reservierungsalarm* at €9.99/year for email (€29.99 for
+  WhatsApp) that notifies you **ten minutes before new offers are published**
+  («Lass Dich zehn Minuten vor Veröffentlichung neuer Tischangebote […]
+  benachrichtigen»). This watcher can only ever see an offer *after* it goes
+  live. For a prime Saturday that head start is likely decisive — treat this
+  repo as a free backstop, not a replacement.
+- An offer that matches an existing one on tent, date, slot, time, seats
+  *and* total collapses into a single alert. Such offers are interchangeable
+  to a buyer, and this is far safer than keying on raw text, which treated
+  any wording change as a brand-new listing.
+- The watcher only reads the public shop page. Actually buying still means
+  logging in and completing checkout yourself, quickly.
+- `state/resale_seen.json` is written by automation. It's committed only
+  when it actually changes, so quiet periods produce no commits — don't
+  hand-edit it while the watcher is running.
+
+## If it stops working
+
+Two failure modes raise a push alarm on their own, throttled to at most one
+every 12 hours:
+
+- **Can't read the site** — blocked, down, or served a stub page.
+- **Parsing broke** — the page loaded but no offers could be parsed for any
+  date, which means the layout changed.
+
+That second alarm is the important one. The previous version had no such
+check, so it reported success every hour for weeks while recording nothing
+usable. When it fires, run the workflow with **dump** set to `true` and read
+the log — it prints the site's current rendered markup, which is what
+`resale_checker/parse.py` needs to be updated against.
