@@ -273,3 +273,18 @@ check, so it reported success every hour for weeks while recording nothing
 usable. When it fires, run the workflow with **dump** set to `true` and read
 the log — it prints the site's current rendered markup, which is what
 `resale_checker/parse.py` needs to be updated against.
+
+## Before it runs automatically
+
+GitHub fires `schedule` triggers **only from the repository's default
+branch**. This work lives on `claude/oktoberfest-table-monitor-9m8v4f`,
+while the default branch is `claude/oktoberfest-tent-reservations-6lo0jq` —
+so until these changes are merged into the default branch, the 10-minute
+cron never fires and only manual **Run workflow** dispatches happen.
+
+Two things are needed to go live:
+
+1. Add the `NTFY_TOPIC` secret (see Setup above). Without it, scheduled runs
+   skip with a warning rather than checking — deliberately, so no offer is
+   marked "already seen" while alerts can't be delivered.
+2. Merge this branch into the default branch.

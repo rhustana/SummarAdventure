@@ -17,6 +17,11 @@ name: Check Oktoberfest resale listings
 on:
   schedule:
     # Every 10 minutes, deliberately off the :00/:30 marks.
+    #
+    # IMPORTANT: GitHub only fires `schedule` from the repository's DEFAULT
+    # branch. While this file lives on a feature branch, the cron never runs
+    # and only manual "Run workflow" dispatches happen. Merge to the default
+    # branch to actually start automatic checking.
     - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
     inputs:
@@ -87,6 +92,15 @@ jobs:
           fi
 
           if [ "$NOTIFY_VIA" = "ntfy" ] && [ -z "$NTFY_TOPIC" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              # Skip cleanly rather than failing. Failing here would email on
+              # every scheduled run until the secret exists -- the exact noise
+              # that got the previous automation switched off. Skipping without
+              # running the check also leaves state untouched, so no offer gets
+              # silently marked "seen" while notifications can't be delivered.
+              echo "::warning::NTFY_TOPIC is not set, so this scheduled check was skipped. Add it under Settings > Secrets and variables > Actions to start receiving alerts."
+              exit 0
+            fi
             echo "::error::NTFY_TOPIC secret is not set -- add it under Settings > Secrets and variables > Actions, or run with notify_via=stdout."
             exit 1
           fi
